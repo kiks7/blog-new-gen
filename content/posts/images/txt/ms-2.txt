@@ -1,0 +1,28 @@
+The Microsoft Launcher (com.microsoft.launcher) Android application (versionName "6.250701.0.1169580") is affected by an "Intent Redirection" vulnerability in the "com.microsoft.launcher.connected.ConnectedHoldingActivity" exported activity.
+
+An intent redirection occurs when an attacker can partly or fully control the contents of an intent used to launch a new component in the context of a vulnerable app. This allows third-party malicious applications to start internal non-exported activities or external application activities protected by permissions that the target application (com.microsoft.launcher) has. In this case, the application uses a lot of permissions (as can be seen in image "uses_permissions.png") due to the launcher needs.
+
+This is the vulnerable code from the "com.microsoft.launcher.connected.ConnectedHoldingActivity" component:
+
+```
+public final void onMAMCreate(Bundle bundle) {
+    toString();
+    Objects.toString(getIntent());
+    this.f15975a = new Handler(Looper.getMainLooper());
+    super.onMAMCreate(bundle);
+    setContentView(C2774R.layout.activity_connected_holding);
+    Intent intent = getIntent();
+    if (intent == null || intent.getBooleanExtra("TRY_CONNECT", false)) {
+        super.finish();
+        return;
+    }
+    Intent intent2 = (Intent) intent.getParcelableExtra("REAL_INTENT");
+    if (intent2 != null) {
+        startActivity(intent2);
+    }
+}
+```
+
+The vulnerability is pretty straightforward. An exta Intent ("REAL_INTENT") is retrieved directly from attacker-controlled input and immediately launched with "startActivity(intent2)".
+
+To mitigate the issue, do not export components that permit arbitrary redirection of user intents. If that is necessary, validate the trust of the caller package or properly sanitize the user input, avoiding an arbitrary unexpected redirection. In other cases, a PendingIntent (https://developer.android.com/guide/components/intents-filters#PendingIntent) can also be used.

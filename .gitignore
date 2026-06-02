@@ -1,0 +1,11 @@
+_site/
+__pycache__/
+*.pyc
+.venv/
+venv/
+llm*
+/to_migrate
+Dockerfile
+build.sh
+run.sh
+migrate.py

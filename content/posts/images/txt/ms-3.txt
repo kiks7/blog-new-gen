@@ -1,0 +1,64 @@
+The launcher application "com.microsoft.launcher", version 6.250701.0.1169580 (from the manifest android:versionName), is vulnerable to an "Unsafe URI Loading" inside a Webview on an exported component: com.microsoft.launcher.view.WebViewActivity.
+
+This is the vulnerable decompiled code:
+
+```
+    public void onMAMCreate(Bundle bundle) {
+        LauncherNestedScrollWebView launcherNestedScrollWebView;
+        requestWindowFeature(1);
+        super.onMAMCreate(bundle);
+        setContentView(i1() ? R.layout.settings_activity_webviewactivity_collapsing_toolbar : R.layout.settings_activity_webviewactivity);
+        this.f20637v = getIntent().getStringExtra("Title");
+        this.f20638w = getIntent().getStringExtra("Url");
+        this.f20639x = getIntent().getBooleanExtra("EnableNav", true);
+        this.f20631E = getIntent().getBooleanExtra("NeedSearch", false);
+        this.f20632H = getIntent().getStringExtra("TargetString");
+        ((X1) this.f18825e).setTitle(this.f20637v);
+        ((X1) this.f18825e).setOnBackButtonClickedListener(new a());
+        ((RelativeLayout) findViewById(R.id.activity_webviewactivity_webview_navbar)).setVisibility(this.f20639x ? 0 : 8);
+        this.f20634s = this.f18826f;
+        RelativeLayout relativeLayout = (RelativeLayout) findViewById(R.id.activity_webviewactivity_container);
+        this.f20633r = new LauncherNestedScrollWebView(this);
+        this.f20633r.setLayoutParams(new RelativeLayout.LayoutParams(-1, -1));
+        relativeLayout.addView(this.f20633r, 0);
+        this.f20633r.setWebChromeClient(new e(this));
+        this.f20633r.setWebViewClient(new f(this));
+        if (j0.m() && (launcherNestedScrollWebView = this.f20633r) != null) {
+            launcherNestedScrollWebView.setHapticFeedbackEnabled(false);
+            launcherNestedScrollWebView.setOnLongClickListener(new i0());
+        }
+        ImageButton imageButton = (ImageButton) findViewById(R.id.activity_webviewactivity_navbar_btn_prev);
+        this.f20640y = imageButton;
+        imageButton.setContentDescription(getResources().getString(R.string.accessibility_webview_pre_button));
+        this.f20640y.setOnClickListener(new b());
+        ImageButton imageButton2 = (ImageButton) findViewById(R.id.activity_webviewactivity_navbar_btn_next);
+        this.f20641z = imageButton2;
+        imageButton2.setContentDescription(getResources().getString(R.string.accessibility_webview_next_button));
+        this.f20641z.setOnClickListener(new c());
+        ImageButton imageButton3 = (ImageButton) findViewById(R.id.activity_webviewactivity_navbar_btn_refresh);
+        this.f20635t = imageButton3;
+        imageButton3.setContentDescription(getResources().getString(R.string.accessibility_webview_refresh_button));
+        this.f20635t.setOnClickListener(new d());
+        this.f20633r.getSettings().setJavaScriptEnabled(true);
+        this.f20633r.getSettings().setBuiltInZoomControls(true);
+        this.f20633r.getSettings().setDisplayZoomControls(false);
+        this.f20633r.getSettings().setSupportZoom(true);
+        this.f20633r.getSettings().setUseWideViewPort(true);
+        this.f20633r.setFocusable(true);
+        this.f20633r.setFocusableInTouchMode(true);
+        this.f20633r.requestFocus(Flight.ENABLE_IN_MEMORY_CACHE);
+        this.f20633r.requestFocusFromTouch();
+        if (this.f20636u) {
+            this.f20633r.loadUrl(this.f20638w);
+        }
+        ViewUtils.Z(this, false);
+    }
+```
+
+As can be seen from the code above, an arbitrary URL is retrieved directly from user input ("getIntent().getStringExtra("Url");"), assigned to variable "this.f20638w" and later loaded into the WebView with "this.f20633r.loadUrl(this.f20638w);". Inside the WebView, it is possible to execute javascript since it is enabled ("this.f20633r.getSettings().setJavaScriptEnabled(true);").
+
+Furthermore, the impact if emphasized more from the extra title retrieved from input ("getIntent().getStringExtra("Title");") that is assigned as the title of the activity theme ("((X1) this.f18825e).setTitle(this.f20637v);"). As can be seen on the attached images ("screen_1.png" and "screen_2.png") it makes a potential phishing attack a lot more plausible (the "https://login.microsoftonline.com" come from user input and the shown HTML is a fake microsoft login page, loaded inside the Microsoft Launcher application).
+
+To mitigate the issue, it is strongly suggested to sanitize the user input, considering a whitelist approach to limit URLs or domain names that can be loaded inside the webview. Event better, if not necessary, do not export the vulnerable component.
+
+More generic details about the vulnerability: https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading.

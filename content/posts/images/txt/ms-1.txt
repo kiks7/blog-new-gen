@@ -1,0 +1,87 @@
+The Microsoft Launcher (com.microsoft.launcher) Android application (versionName "6.250701.0.1169580") is affected by an "Intent Redirection with setResult" vulnerability in the "com.microsoft.rewards.activity.RewardsWebViewActivity" exported activity.
+
+It is possible, from a third-party malicious application, to interact with the affected component and make it return an arbitrary intent with the privileged flags "FLAG_GRANT_READ_URI_PERMISSION" and "FLAG_GRANT_WRITE_URI_PERMISSION" set. This makes possible to interact with internal non-exported content providers and further escalate the impact. In this specific case, it is possible to have arbitrary file read and write that permits to leak sensitive information and compromise the launcher homepage with attacker-controlled applications.
+
+This is the vulnerable code ("decompiled_vulnerable_code.png") from the vulnerable component("exported_component.png"):
+
+```
+public class RewardsWebViewActivity extends WebViewActivity {
+    /* .. */
+    @Override // com.microsoft.launcher.view.WebViewActivity, androidx.activity.ComponentActivity, android.app.Activity
+    public final void onBackPressed() {
+        super.onBackPressed();
+        setResult(-1, getIntent());
+        finish();
+    }
+    /* .. */
+```
+
+From the code below, it can be seen that when the user performs the "back" action when the activity is open (after being launched from the malicious activity), the setResult directly uses the attacker-controlled intent as the second parameter, creating the vulnerability. An attacker can craft an intent with "FLAG_GRANT_READ_URI_PERMISSION" and "FLAG_GRANT_WRITE_URI_PERMISSION" set and target an internal content provider that has grantUriPermissions attribute set.
+
+Sample attacker code:
+
+```
+Intent intent = new Intent();
+intent.setData(Uri.parse("content://com.microsoft.launcher.provider/...."));
+intent.setFlags(FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION);
+intent.setClassName("com.microsoft.launcher", "com.microsoft.rewards.activity.RewardsWebViewActivity");
+startActivityForResult(intent, OP_READ);
+```
+
+The Content Provider "androidx.core.content.FileProvider" is not exported but has "android:grantUriPermissions" attribute set (see "file_provider.png"), making it a perfect target. This is the source code of the androidx.core.content.FileProvider:
+
+```
+    @SuppressLint({"UnknownNullness"})
+    public final ParcelFileDescriptor openFileMAM(Uri uri, String str) throws FileNotFoundException {
+        int i10;
+        File b10 = b().b(uri);
+        if ("r".equals(str)) {
+            i10 = 268435456;
+        } else if ("w".equals(str) || "wt".equals(str)) {
+            i10 = 738197504;
+        } else if ("wa".equals(str)) {
+            i10 = 704643072;
+        } else if ("rw".equals(str)) {
+            i10 = 939524096;
+        } else {
+            if (!"rwt".equals(str)) {
+                throw new IllegalArgumentException(N.c("Invalid mode: ", str));
+            }
+            i10 = 1006632960;
+        }
+        return ParcelFileDescriptor.open(b10, i10);
+    }
+
+    public final File b(Uri uri) {
+    String encodedPath = uri.getEncodedPath();
+    int indexOf = encodedPath.indexOf(47, 1);
+    String decode = Uri.decode(encodedPath.substring(1, indexOf));
+    String decode2 = Uri.decode(encodedPath.substring(indexOf + 1));
+    File file = this.b.get(decode);
+    if (file == null) {
+        throw new IllegalArgumentException(P.a("Unable to find configured root for ", uri));
+    }
+    File file2 = new File(file, decode2);
+    try {
+        File canonicalFile = file2.getCanonicalFile();
+        if (c(canonicalFile.getPath(), file.getPath())) {
+            return canonicalFile;
+        }
+        throw new SecurityException("Resolved path jumped beyond configured root");
+    } catch (IOException unused) {
+        throw new IllegalArgumentException("Failed to resolve canonical path for " + file2);
+    }
+}
+```
+
+As can be observed, the b() function, responsible to initially open the File given an input uri, is vulnerable to a Path Traversal vulnerability. It is possible to specify "root_path" as the first parent directory (from the "provider_paths.xml" configuration file) to make it return its value ".". Then, since the input is not sanitized, it is possible to traverse the path with "../" and access the whole file-system with "com.microsoft.launcher" permissions, including application internal data. Since it's also possible to specify an open mode (read or write), the attacker has a complete arbitrary file read and write primitives.
+
+For the read primitive, I found some interesting application specific files that can be retrieved:
+
+- "./shared_prefs/AccessToken.xml" and "./shared_prefs/com.microsoft.identity.client.account_credential_cache.xml" that contains authentication tokens ("poc_video_leak.webm" and "leak_file_com_microsoft_identity_client_account_credential_cache_xml.png").
+- Bing search history from "./databases/BingSearchHistory.db".
+- Get the current GPS victim location: the application stores two serialized objects in the "files/" app directory ("CurrentLocation.dat" and "AutoLocation.dat") that are "WeatherLocation" objects. As can be seen in the attachment "WeatherLocation_class.png", this object contains the extact user location with latitude and longitude. These files can be retrieved and deserialized to obtain precise coordinates.
+
+However, the most interesting scenario I have been able to verify is to overwrite the "databases/launcher3.db" database file when the application is set as default launcher. By overwriting this file, an attacker is able to alter the "favorites" table, that contains a list of applications (Office, social and default applications such as Contacts and Camera), with an arbitrary intent that is launched when the application's icon is pressed. By overwriting this table, an attacker can target specific applications (or all applications) and specify an arbitrary "intent" that will redirect to its malicious application (e.g. creating a specific exported activity for each application). However, when the database is overwritten, the application does not immediately reload it. In order to make it immediate, it is possible to crash the application just by calling the exported "com.yubico.yubikit.android.ui.YubiKeyPromptActivity" activity (with a startActivity call). When the application restarts (just after the crash), the "launcher3.db" is reloaded and now the homepage is compromised ("poc_video_launcher3_db.webm").
+
+To mitigate the issue, do not return the input intent ("getIntent()") directly with setResult without proper sanitization (e.g. removing the "FLAG_GRANT_READ_URI_PERMISSION" and "FLAG_GRANT_WRITE_URI_PERMISSION" flags). Also, in the content provider, it might be good (also if not directly exploitable since it's not exported) to sanitize the input URI in order to avoid Path Traversal attacks.
